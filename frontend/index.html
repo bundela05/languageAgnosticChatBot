@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Campus Query Assistant | Language-Agnostic Portal</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <!-- Google Fonts for crisp typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Marked.js for rendering markdown tables and lists from LLM responses -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar / Notice Management Drawer -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-group">
+                    <i data-lucide="graduation-cap" class="sidebar-icon"></i>
+                    <div>
+                        <h2>Campus Hub</h2>
+                        <span class="subtext">Document Knowledge Base</span>
+                    </div>
+                </div>
+                <button class="icon-btn close-sidebar-btn" id="closeSidebarBtn" title="Close Panel">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+
+            <div class="sidebar-content">
+                <!-- Upload Notice Section -->
+                <div class="card upload-card">
+                    <h3><i data-lucide="upload-cloud"></i> Upload Notice</h3>
+                    <p class="card-caption">Ingest new official circulars, exam schedules, or fee notices (PDF/TXT).</p>
+                    
+                    <form id="uploadForm" class="upload-form">
+                        <label for="noticeFileInput" class="dropzone" id="dropzone">
+                            <i data-lucide="file-plus" class="dropzone-icon"></i>
+                            <span id="dropzoneLabel">Click or drag PDF here</span>
+                            <input type="file" id="noticeFileInput" accept=".pdf,.txt" hidden required>
+                        </label>
+                        <button type="submit" class="primary-btn full-width" id="uploadSubmitBtn">
+                            <span>Index Document</span>
+                        </button>
+                    </form>
+                    <div id="uploadFeedback" class="feedback-msg"></div>
+                </div>
+
+                <!-- Repository Status -->
+                <div class="card doc-list-card">
+                    <div class="card-title-row">
+                        <h3><i data-lucide="file-text"></i> Indexed Notices</h3>
+                        <button id="refreshDocsBtn" class="refresh-btn" title="Refresh List">
+                            <i data-lucide="rotate-cw"></i>
+                        </button>
+                    </div>
+                    <ul class="doc-list" id="indexedDocList">
+                        <li class="empty-doc-item">Loading notices...</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <span class="badge status-badge"><span class="dot"></span> Vector Store Active</span>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <!-- Top Navigation Bar -->
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="icon-btn menu-toggle" id="menuToggleBtn" title="Toggle Notices Panel">
+                        <i data-lucide="menu"></i>
+                    </button>
+                    <div class="assistant-branding">
+                        <h1>Language-Agnostic Campus Assistant</h1>
+                        <span class="system-caption">Grounding in official notices & academic circulars</span>
+                    </div>
+                </div>
+
+                <div class="topbar-actions">
+                    <!-- Language Selection Dropdown -->
+                    <div class="select-wrapper">
+                        <i data-lucide="languages" class="select-icon"></i>
+                        <select id="languageSelect" aria-label="Target Response Language">
+                            <option value="auto" selected>Auto Detect</option>
+                            <option value="en">English</option>
+                            <option value="hi">हिंदी (Hindi)</option>
+                            <option value="hinglish">Hinglish</option>
+                        </select>
+                    </div>
+
+                    <button class="secondary-btn" id="newChatBtn" title="Reset Session">
+                        <i data-lucide="plus-circle"></i>
+                        <span>New Chat</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Conversation Display Area -->
+            <section class="messages-container" id="messagesContainer">
+                <!-- Welcome card / empty state -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-icon-box">
+                        <i data-lucide="bot" class="welcome-icon"></i>
+                    </div>
+                    <h2>Welcome to the Campus Helpdesk</h2>
+                    <p>Ask questions in English, Hindi, or Hinglish. Every response is strictly retrieved from verified college circulars and guidelines.</p>
+                    
+                    <div class="quick-prompts">
+                        <button class="prompt-chip" data-query="What is the schedule for BTCS706N major project presentation and submissions?">
+                            📅 "What is the schedule for BTCS706N project submissions?"
+                        </button>
+                        <button class="prompt-chip" data-query="Semester exam fees pay karne ki last date kya hai?">
+                            💰 "Semester exam fees pay karne ki last date kya hai?"
+                        </button>
+                        <button class="prompt-chip" data-query="रिसर्च पेपर सबमिशन के लिए प्लेगिएरिज़्म और एआई डिटेक्शन के क्या नियम हैं?">
+                            📝 "रिसर्च पेपर के लिए प्लेगिएरिज़्म नियम क्या हैं?"
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Dynamic Chat Bubbles populate here -->
+                <div class="chat-flow" id="chatFlow"></div>
+            </section>
+
+            <!-- Query Input Bar -->
+            <footer class="input-container">
+                <form id="chatForm" class="chat-form">
+                    <div class="input-wrapper">
+                        <textarea 
+                            id="queryInput" 
+                            rows="1" 
+                            placeholder="Ask any campus question in English, हिन्दी, or Hinglish..."
+                            autocomplete="off"
+                            required
+                        ></textarea>
+                        <button type="submit" id="sendBtn" class="send-btn" title="Send Message">
+                            <i data-lucide="send"></i>
+                        </button>
+                    </div>
+                </form>
+                <div class="input-disclaimer">
+                    <span>Verified campus assistant. Information is extracted directly from authorized institution documents.</span>
+                </div>
+            </footer>
+        </main>
+    </div>
+
+    <!-- Application Script -->
+    <script src="/static/script.js"></script>
+</body>
+</html>

@@ -16,8 +16,8 @@ A lightweight, language-agnostic chatbot engine supporting multilingual conversa
 
 ### 1. Clone the Repository
 \`\`\`bash
-git clone https://github.com/bundela05/polyglot-chatbot.git
-cd languageAgnosticChatBot-chatbot
+git clone https://github.com/bundela05/languageAgnosticChatBot.git
+cd languageAgnosticChatBot
 \`\`\`
 
 ### 2. Set Up Environment
