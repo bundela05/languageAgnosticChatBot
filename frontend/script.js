@@ -1,375 +1,234 @@
 /**
- * Language-Agnostic Campus Chatbot Frontend Engine
- * Coordinates UI interactions, SSE chat streaming, markdown rendering, and document indexing.
+ * Language-Agnostic Campus Query Assistant
+ * Frontend Controller: Handles session persistence, chat streaming,
+ * document ingestion, and dynamic Markdown/Citation rendering.
  */
 
 document.addEventListener("DOMContentLoaded", () => {
-    // ----------------------------------------------------------------------
-    // 1. State Management & Initialization
-    // ----------------------------------------------------------------------
-    const STORAGE_KEY_CONVERSATION_ID = "campus_chatbot_conv_id";
-    let conversationId = localStorage.getItem(STORAGE_KEY_CONVERSATION_ID);
-
-    if (!conversationId) {
-        conversationId = generateUUID();
-        localStorage.setItem(STORAGE_KEY_CONVERSATION_ID, conversationId);
-    }
-
-    // DOM Elements
+    // -----------------------------------------------------------------------
+    // 1. DOM Elements & State
+    // -----------------------------------------------------------------------
     const chatFlow = document.getElementById("chatFlow");
-    const welcomeScreen = document.getElementById("welcomeScreen");
     const messagesContainer = document.getElementById("messagesContainer");
+    const welcomeScreen = document.getElementById("welcomeScreen");
     const chatForm = document.getElementById("chatForm");
     const queryInput = document.getElementById("queryInput");
     const sendBtn = document.getElementById("sendBtn");
     const languageSelect = document.getElementById("languageSelect");
     const newChatBtn = document.getElementById("newChatBtn");
+
+    // Sidebar & Upload Elements
+    const sidebar = document.getElementById("sidebar");
     const menuToggleBtn = document.getElementById("menuToggleBtn");
     const closeSidebarBtn = document.getElementById("closeSidebarBtn");
-    const sidebar = document.getElementById("sidebar");
-
-    // Document Management DOM Elements
     const uploadForm = document.getElementById("uploadForm");
     const noticeFileInput = document.getElementById("noticeFileInput");
-    const dropzone = document.getElementById("dropzone");
     const dropzoneLabel = document.getElementById("dropzoneLabel");
-    const uploadSubmitBtn = document.getElementById("uploadSubmitBtn");
+    const dropzone = document.getElementById("dropzone");
     const uploadFeedback = document.getElementById("uploadFeedback");
     const indexedDocList = document.getElementById("indexedDocList");
     const refreshDocsBtn = document.getElementById("refreshDocsBtn");
 
-    // Configure marked.js for sanitized and styled tables/lists
+    // Configure marked.js options
     if (window.marked) {
         marked.setOptions({
-            gfm: true,
             breaks: true,
-            sanitize: false
+            gfm: true
         });
     }
 
-    // Render initial icons and fetch active documents
+    // Initialize or restore conversation UUID
+    let conversationId = localStorage.getItem("campus_chat_convo_id");
+    if (!conversationId) {
+        conversationId = generateUUID();
+        localStorage.setItem("campus_chat_convo_id", conversationId);
+    }
+
+    let isProcessing = false;
+
+    // Refresh icons on load
     refreshLucideIcons();
-    fetchIndexedDocuments();
 
-    // ----------------------------------------------------------------------
-    // 2. Chat Interaction & Server-Sent Events (SSE) Streaming
-    // ----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // 2. Chat Execution & Rendering Logic
+    // -----------------------------------------------------------------------
 
-    // Auto-expand textarea height as user types
-    queryInput.addEventListener("input", function () {
-        this.style.height = "auto";
-        this.style.height = Math.min(this.scrollHeight, 140) + "px";
-    });
-
-    // Handle Enter key for submission (Shift+Enter for newline)
-    queryInput.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            chatForm.dispatchEvent(new Event("submit"));
-        }
-    });
-
-    // Quick prompt chips
-    document.querySelectorAll(".prompt-chip").forEach((chip) => {
-        chip.addEventListener("click", () => {
-            const query = chip.getAttribute("data-query");
-            if (query) {
-                queryInput.value = query;
-                chatForm.dispatchEvent(new Event("submit"));
-            }
-        });
-    });
-
-    // Submit user message
     chatForm.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const text = queryInput.value.trim();
-        if (!text) return;
+        const query = queryInput.value.trim();
+        if (!query || isProcessing) return;
 
-        // Hide welcome screen on first question
+        // Hide empty welcome screen on first interaction
         if (welcomeScreen) {
             welcomeScreen.style.display = "none";
         }
 
         // Render user message bubble
-        appendUserMessage(text);
+        appendMessage({
+            sender: "user",
+            text: query,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+
         queryInput.value = "";
-        queryInput.style.height = "auto";
+        autoResizeTextarea();
+        isProcessing = true;
         sendBtn.disabled = true;
 
-        // Render assistant placeholder bubble with typing animation
-        const botBubbleContainer = createBotMessagePlaceholder();
-        chatFlow.appendChild(botBubbleContainer);
+        // Show typing indicator
+        const typingIndicator = createTypingIndicator();
+        chatFlow.appendChild(typingIndicator);
         scrollToBottom();
 
-        const selectedLang = languageSelect.value;
+        const preferredLang = languageSelect.value;
 
         try {
-            await handleStreamingChat(text, selectedLang, botBubbleContainer);
-        } catch (err) {
-            console.warn("SSE stream failed, falling back to standard POST:", err);
-            await handleStandardChat(text, selectedLang, botBubbleContainer);
+            // Initiate standard chat invocation
+            const response = await fetch("/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    message: query,
+                    conversation_id: conversationId,
+                    preferred_language: preferredLang
+                })
+            });
+
+            typingIndicator.remove();
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || `Server returned error ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            // Append assistant response
+            appendMessage({
+                sender: "assistant",
+                text: data.response,
+                detectedLanguage: data.detected_language,
+                intent: data.intent,
+                sources: data.sources || [],
+                timestamp: new Date(data.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
+
+        } catch (error) {
+            if (typingIndicator) typingIndicator.remove();
+            appendMessage({
+                sender: "assistant",
+                text: `⚠️ **Error:** Unable to complete your request. ${error.message}`,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            });
         } finally {
+            isProcessing = false;
             sendBtn.disabled = false;
             queryInput.focus();
-            refreshLucideIcons();
+            scrollToBottom();
         }
     });
 
-    /**
-     * Executes streaming inference via /api/chat/stream
-     */
-    async function handleStreamingChat(queryText, prefLang, container) {
-        const response = await fetch("/api/chat/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                message: queryText,
-                conversation_id: conversationId,
-                preferred_language: prefLang
-            })
-        });
+    function appendMessage({ sender, text, detectedLanguage, intent, sources = [], timestamp }) {
+        const row = document.createElement("div");
+        row.className = `message-row ${sender === "user" ? "user" : "bot"}`;
 
-        if (!response.ok || !response.body) {
-            throw new Error(`HTTP error ${response.status}`);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        const contentDiv = container.querySelector(".bot-content");
-        let accumulatedText = "";
-        let metaData = null;
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
-
-            for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    const dataStr = line.replace("data: ", "").trim();
-                    if (dataStr === "[DONE]") {
-                        break;
-                    }
-
-                    try {
-                        const event = JSON.parse(dataStr);
-                        if (event.type === "metadata") {
-                            metaData = event;
-                            renderBotMetadata(container, event);
-                        } else if (event.type === "content") {
-                            accumulatedText += event.delta;
-                            contentDiv.innerHTML = window.marked
-                                ? marked.parse(accumulatedText)
-                                : escapeHtml(accumulatedText);
-                            scrollToBottom();
-                        }
-                    } catch (pErr) {
-                        // ignore malformed partial SSE chunks
-                    }
-                }
-            }
-        }
-
-        // Render citations if available
-        if (metaData && metaData.sources && metaData.sources.length > 0) {
-            renderSources(container, metaData.sources);
-        }
-    }
-
-    /**
-     * Fallback standard POST to /api/chat
-     */
-    async function handleStandardChat(queryText, prefLang, container) {
-        const response = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                message: queryText,
-                conversation_id: conversationId,
-                preferred_language: prefLang
-            })
-        });
-
-        const data = await response.json();
-        const contentDiv = container.querySelector(".bot-content");
-
-        if (response.ok) {
-            contentDiv.innerHTML = window.marked
-                ? marked.parse(data.response)
-                : escapeHtml(data.response);
-            renderBotMetadata(container, data);
-            if (data.sources && data.sources.length > 0) {
-                renderSources(container, data.sources);
-            }
+        if (sender === "user") {
+            row.innerHTML = `
+                <div class="message-body">
+                    <div class="message-bubble">${escapeHTML(text)}</div>
+                    <div class="bubble-meta" style="justify-content: flex-end;">
+                        <span>${timestamp}</span>
+                    </div>
+                </div>
+            `;
         } else {
-            contentDiv.innerHTML = `<span style="color: var(--accent-rose);">Error: ${escapeHtml(data.detail || "Unable to process query.")}</span>`;
+            // Render markdown content
+            const renderedMarkdown = window.marked ? marked.parse(text) : escapeHTML(text);
+
+            // Build sources citations if present
+            let sourcesHTML = "";
+            if (sources && sources.length > 0) {
+                const sourcePills = sources.map((s, idx) => {
+                    const score = s.relevance_score ? `(${(s.relevance_score * 100).toFixed(0)}% match)` : "";
+                    return `
+                        <div class="source-badge" title="${escapeHTML(s.chunk_text.slice(0, 150))}...">
+                            <i data-lucide="bookmark"></i>
+                            <span>${escapeHTML(s.document_title)} (Pg. ${s.page_number || 1}) ${score}</span>
+                        </div>
+                    `;
+                }).join("");
+
+                sourcesHTML = `
+                    <div class="sources-container">
+                        <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 600;">VERIFIED CITATIONS:</span>
+                        ${sourcePills}
+                    </div>
+                `;
+            }
+
+            // Build metadata badges
+            let metaBadges = "";
+            if (detectedLanguage) {
+                metaBadges += `<span class="lang-pill">${detectedLanguage.toUpperCase()}</span>`;
+            }
+            if (intent && intent !== "campus_academics") {
+                metaBadges += `<span class="intent-pill">${intent.replace("campus_", "")}</span>`;
+            }
+
+            row.innerHTML = `
+                <div class="avatar bot-avatar">
+                    <i data-lucide="bot"></i>
+                </div>
+                <div class="message-body">
+                    <div class="message-bubble markdown-body">
+                        ${renderedMarkdown}
+                        ${sourcesHTML}
+                    </div>
+                    <div class="bubble-meta">
+                        ${metaBadges}
+                        <span>${timestamp}</span>
+                    </div>
+                </div>
+            `;
         }
-        scrollToBottom();
-    }
 
-    // ----------------------------------------------------------------------
-    // 3. UI Rendering Helpers
-    // ----------------------------------------------------------------------
-
-    function appendUserMessage(text) {
-        const row = document.createElement("div");
-        row.className = "message-row user";
-        row.innerHTML = `
-            <div class="message-body">
-                <div class="message-bubble">${escapeHtml(text)}</div>
-            </div>
-        `;
         chatFlow.appendChild(row);
+        refreshLucideIcons();
         scrollToBottom();
     }
 
-    function createBotMessagePlaceholder() {
+    function createTypingIndicator() {
         const row = document.createElement("div");
-        row.className = "message-row bot";
+        row.className = "message-row bot typing-row";
         row.innerHTML = `
             <div class="avatar bot-avatar">
                 <i data-lucide="bot"></i>
             </div>
             <div class="message-body">
-                <div class="message-bubble bot-content">
-                    <div class="typing-indicator">
-                        <span class="typing-dot"></span>
-                        <span class="typing-dot"></span>
-                        <span class="typing-dot"></span>
-                    </div>
+                <div class="message-bubble typing-indicator">
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
+                    <span class="typing-dot"></span>
                 </div>
-                <div class="bubble-meta" style="display: none;"></div>
-                <div class="sources-container"></div>
             </div>
         `;
+        refreshLucideIcons();
         return row;
     }
 
-    function renderBotMetadata(container, data) {
-        const metaDiv = container.querySelector(".bubble-meta");
-        if (!metaDiv) return;
+    // -----------------------------------------------------------------------
+    // 3. Document Ingestion & Repository Sync
+    // -----------------------------------------------------------------------
 
-        const lang = data.detected_language || "en";
-        const intent = data.intent || "campus_query";
-
-        metaDiv.style.display = "flex";
-        metaDiv.innerHTML = `
-            <span class="lang-pill"><i data-lucide="globe" style="width:10px;height:10px;display:inline;"></i> ${lang}</span>
-            <span class="intent-pill">${intent.replace("_", " ")}</span>
-        `;
-        refreshLucideIcons();
-    }
-
-    function renderSources(container, sources) {
-        const sourcesContainer = container.querySelector(".sources-container");
-        if (!sourcesContainer || sources.length === 0) return;
-
-        let sourcesHtml = '<div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.3rem;">Grounded Sources:</div>';
-        sources.forEach((s) => {
-            const pageInfo = s.page_number ? ` (p. ${s.page_number})` : "";
-            const scoreInfo = s.relevance_score ? ` [${Math.round(s.relevance_score * 100)}% match]` : "";
-            sourcesHtml += `
-                <div class="source-badge" title="${escapeHtml(s.chunk_text.slice(0, 150))}...">
-                    <i data-lucide="file-check"></i>
-                    <span>${escapeHtml(s.document_title)}${pageInfo}${scoreInfo}</span>
-                </div>
-            `;
-        });
-
-        sourcesContainer.innerHTML = sourcesHtml;
-        refreshLucideIcons();
-        scrollToBottom();
-    }
-
-    // ----------------------------------------------------------------------
-    // 4. Document Upload & Repository Management
-    // ----------------------------------------------------------------------
-
-    // File drag & drop triggers
-    ["dragenter", "dragover"].forEach((eventName) => {
-        dropzone.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropzone.classList.add("drag-over");
-        });
-    });
-
-    ["dragleave", "drop"].forEach((eventName) => {
-        dropzone.addEventListener(eventName, (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            dropzone.classList.remove("drag-over");
-        });
-    });
-
-    dropzone.addEventListener("drop", (e) => {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-        if (files.length > 0) {
-            noticeFileInput.files = files;
-            dropzoneLabel.textContent = files[0].name;
-        }
-    });
-
-    noticeFileInput.addEventListener("change", function () {
-        if (this.files.length > 0) {
-            dropzoneLabel.textContent = this.files[0].name;
-        }
-    });
-
-    // Form submission for document indexing
-    uploadForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        if (!noticeFileInput.files || noticeFileInput.files.length === 0) {
-            showFeedback("Please select a valid PDF or TXT file first.", "error");
-            return;
-        }
-
-        const file = noticeFileInput.files[0];
-        const formData = new FormData();
-        formData.append("file", file);
-
-        uploadSubmitBtn.disabled = true;
-        uploadSubmitBtn.innerHTML = "<span>Indexing document...</span>";
-        showFeedback("Processing layout and generating vector embeddings...", "success");
-
-        try {
-            const res = await fetch("/api/documents/upload", {
-                method: "POST",
-                body: formData
-            });
-
-            const data = await res.json();
-            if (res.ok) {
-                showFeedback(`Indexed ${data.filename} (${data.chunks_created} chunks)`, "success");
-                uploadForm.reset();
-                dropzoneLabel.textContent = "Click or drag PDF here";
-                fetchIndexedDocuments();
-            } else {
-                showFeedback(`Upload failed: ${data.detail || "Server error"}`, "error");
-            }
-        } catch (err) {
-            showFeedback(`Error uploading notice: ${err.message}`, "error");
-        } finally {
-            uploadSubmitBtn.disabled = false;
-            uploadSubmitBtn.innerHTML = "<span>Index Document</span>";
-        }
-    });
-
-    // Fetch and render indexed documents in drawer
-    async function fetchIndexedDocuments() {
+    async function loadIndexedDocuments() {
         try {
             const res = await fetch("/api/documents/list");
-            if (!res.ok) throw new Error("Could not fetch documents");
-
+            if (!res.ok) throw new Error("Failed to fetch documents");
             const docs = await res.json();
-            indexedDocList.innerHTML = "";
 
+            indexedDocList.innerHTML = "";
             if (!docs || docs.length === 0) {
-                indexedDocList.innerHTML = '<li class="empty-doc-item">No campus circulars indexed yet.</li>';
+                indexedDocList.innerHTML = `<li class="empty-doc-item">No official notices indexed yet.</li>`;
                 return;
             }
 
@@ -378,105 +237,178 @@ document.addEventListener("DOMContentLoaded", () => {
                 li.className = "doc-item";
                 li.innerHTML = `
                     <div class="doc-info">
-                        <span class="doc-title" title="${escapeHtml(doc.filename)}">${escapeHtml(doc.filename)}</span>
-                        <span class="doc-meta">${doc.chunks_count} chunks • ${doc.category || "General"}</span>
+                        <span class="doc-title" title="${escapeHTML(doc.filename)}">${escapeHTML(doc.filename)}</span>
+                        <span class="doc-meta">${doc.total_pages} page(s) • ${doc.chunks_count} chunks</span>
                     </div>
-                    <button class="doc-delete-btn" data-filename="${escapeHtml(doc.filename)}" title="Remove Notice">
+                    <button class="doc-delete-btn" data-filename="${escapeHTML(doc.filename)}" title="Delete Notice">
                         <i data-lucide="trash-2"></i>
                     </button>
                 `;
-
-                li.querySelector(".doc-delete-btn").addEventListener("click", async function () {
-                    const filename = this.getAttribute("data-filename");
-                    if (confirm(`Remove '${filename}' and purge vector embeddings?`)) {
-                        await deleteNotice(filename);
-                    }
-                });
-
                 indexedDocList.appendChild(li);
             });
+
+            // Attach delete listeners
+            document.querySelectorAll(".doc-delete-btn").forEach((btn) => {
+                btn.addEventListener("click", () => handleDeleteDocument(btn.dataset.filename));
+            });
+
             refreshLucideIcons();
         } catch (err) {
-            indexedDocList.innerHTML = '<li class="empty-doc-item">Unable to load notices.</li>';
+            indexedDocList.innerHTML = `<li class="empty-doc-item" style="color: var(--accent-rose);">Error loading documents</li>`;
         }
     }
 
-    async function deleteNotice(filename) {
+    uploadForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const file = noticeFileInput.files[0];
+        if (!file) {
+            showFeedback("Please select a PDF or TXT file to upload.", "error");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const submitBtn = document.getElementById("uploadSubmitBtn");
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<span>Indexing...</span>`;
+
+        try {
+            const res = await fetch("/api/documents/upload", {
+                method: "POST",
+                body: formData
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Upload failed");
+
+            showFeedback(`✓ Indexed '${data.filename}' (${data.chunks_created} chunks)`, "success");
+            uploadForm.reset();
+            dropzoneLabel.textContent = "Click or drag PDF here";
+            loadIndexedDocuments();
+        } catch (err) {
+            showFeedback(`Failed: ${err.message}`, "error");
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `<span>Index Document</span>`;
+        }
+    });
+
+    async function handleDeleteDocument(filename) {
+        if (!confirm(`Are you sure you want to delete and purge '${filename}' from vector memory?`)) return;
+
         try {
             const res = await fetch(`/api/documents/${encodeURIComponent(filename)}`, {
                 method: "DELETE"
             });
-            if (res.ok) {
-                fetchIndexedDocuments();
-            } else {
-                alert("Failed to delete document.");
-            }
-        } catch (e) {
-            alert(`Error deleting document: ${e.message}`);
+            if (!res.ok) throw new Error("Delete failed");
+            loadIndexedDocuments();
+        } catch (err) {
+            alert(`Error deleting notice: ${err.message}`);
         }
     }
 
-    refreshDocsBtn.addEventListener("click", () => {
-        fetchIndexedDocuments();
-    });
+    function showFeedback(msg, type) {
+        uploadFeedback.className = `feedback-msg ${type}`;
+        uploadFeedback.textContent = msg;
+        setTimeout(() => {
+            uploadFeedback.className = "feedback-msg";
+        }, 5000);
+    }
 
-    // ----------------------------------------------------------------------
-    // 5. Sidebar Toggle & Session Reset
-    // ----------------------------------------------------------------------
-    menuToggleBtn.addEventListener("click", () => {
-        sidebar.classList.toggle("open");
-    });
+    // -----------------------------------------------------------------------
+    // 4. File Dropzone & UI Utilities
+    // -----------------------------------------------------------------------
 
-    closeSidebarBtn.addEventListener("click", () => {
-        sidebar.classList.remove("open");
-    });
-
-    newChatBtn.addEventListener("click", () => {
-        if (confirm("Start a new conversation session?")) {
-            conversationId = generateUUID();
-            localStorage.setItem(STORAGE_KEY_CONVERSATION_ID, conversationId);
-            chatFlow.innerHTML = "";
-            if (welcomeScreen) {
-                welcomeScreen.style.display = "flex";
-            }
+    noticeFileInput.addEventListener("change", () => {
+        if (noticeFileInput.files.length > 0) {
+            dropzoneLabel.textContent = noticeFileInput.files[0].name;
         }
     });
 
-    // ----------------------------------------------------------------------
-    // 6. Utility Functions
-    // ----------------------------------------------------------------------
-    function generateUUID() {
-        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
-            const r = (Math.random() * 16) | 0;
-            const v = c === "x" ? r : (r & 0x3) | 0x8;
-            return v.toString(16);
+    ["dragenter", "dragover"].forEach((eventName) => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.classList.add("drag-over");
         });
+    });
+
+    ["dragleave", "drop"].forEach((eventName) => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropzone.classList.remove("drag-over");
+            if (eventName === "drop" && e.dataTransfer.files.length > 0) {
+                noticeFileInput.files = e.dataTransfer.files;
+                dropzoneLabel.textContent = e.dataTransfer.files[0].name;
+            }
+        });
+    });
+
+    // Auto-resize input textarea as user types
+    queryInput.addEventListener("input", autoResizeTextarea);
+    queryInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            chatForm.dispatchEvent(new Event("submit"));
+        }
+    });
+
+    function autoResizeTextarea() {
+        queryInput.style.height = "auto";
+        queryInput.style.height = `${Math.min(queryInput.scrollHeight, 140)}px`;
     }
+
+    // Quick prompt chips
+    document.querySelectorAll(".prompt-chip").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            queryInput.value = btn.dataset.query;
+            autoResizeTextarea();
+            chatForm.dispatchEvent(new Event("submit"));
+        });
+    });
+
+    // Reset Chat session
+    newChatBtn.addEventListener("click", () => {
+        conversationId = generateUUID();
+        localStorage.setItem("campus_chat_convo_id", conversationId);
+        chatFlow.innerHTML = "";
+        if (welcomeScreen) welcomeScreen.style.display = "flex";
+        queryInput.value = "";
+        queryInput.focus();
+    });
+
+    // Sidebar Toggling for Mobile
+    menuToggleBtn.addEventListener("click", () => sidebar.classList.toggle("open"));
+    closeSidebarBtn.addEventListener("click", () => sidebar.classList.remove("open"));
+    refreshDocsBtn.addEventListener("click", loadIndexedDocuments);
 
     function scrollToBottom() {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    function showFeedback(text, type) {
-        uploadFeedback.textContent = text;
-        uploadFeedback.className = `feedback-msg ${type}`;
-        uploadFeedback.style.display = "block";
-        setTimeout(() => {
-            if (type === "success") {
-                uploadFeedback.style.display = "none";
-            }
-        }, 5000);
-    }
-
-    function escapeHtml(string) {
-        const div = document.createElement("div");
-        div.textContent = string;
-        return div.innerHTML;
-    }
-
     function refreshLucideIcons() {
         if (window.lucide) {
-            lucide.createIcons();
+            window.lucide.createIcons();
         }
     }
+
+    function escapeHTML(str) {
+        return str
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
+    function generateUUID() {
+        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+            const r = Math.random() * 16 | 0;
+            const v = c === "x" ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    // Initial load
+    loadIndexedDocuments();
 });

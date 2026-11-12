@@ -1,28 +1,34 @@
-# this file contains all the imports required in the project
+# This file contains all the dependencies required for languageAgnosticChatBot
 
-# --- requirements.txt ---
+# --- Core Web & API Framework ---
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.8.0
 python-multipart>=0.0.9
+typing-extensions>=4.12.0
 
-# LangChain & LangGraph Orchestration
+# --- LangChain & LangGraph Orchestration ---
 langchain>=0.3.0
 langchain-core>=0.3.0
 langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
 langgraph>=0.2.20
 langchain-groq>=0.2.0
 langchain-huggingface>=0.1.0
 
-# Vector Database & Embeddings
+# --- Vector Database & Multilingual Embeddings ---
 chromadb>=0.5.5
 sentence-transformers>=3.0.0
 
-# Document Ingestion & Parsing
+# --- Document Ingestion & Parsing ---
 pypdf>=4.3.0
 pdfplumber>=0.11.0
 
-# Utilities & Language Processing
+# --- Utilities & Language Processing ---
 python-dotenv>=1.0.1
 langdetect>=1.0.9
 requests>=2.32.0
+
+# --- Unit & Integration Testing ---
+pytest>=8.3.0
+httpx>=0.27.0
