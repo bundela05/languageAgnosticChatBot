@@ -8,7 +8,7 @@ from langchain_core.language_models import BaseChatModel
 
 from app.chatbot.prompts import QUERY_NORMALIZATION_PROMPT, TRANSLATION_PROMPT
 
-load_dotenv()
+load_dotenv(override=True)
 
 # Enforce deterministic results for langdetect
 DetectorFactory.seed = 0

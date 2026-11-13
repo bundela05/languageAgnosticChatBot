@@ -1,7 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Literal, Optional
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
+
+
+def utc_now() -> datetime:
+    """Returns a timezone-aware UTC datetime object."""
+    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +46,7 @@ class ChatResponse(BaseModel):
     detected_language: str = Field(..., description="Detected query language code (e.g., 'en', 'hi', 'hinglish').")
     intent: str = Field(..., description="Classified intent (e.g., 'campus_query', 'general_greeting', 'out_of_scope').")
     sources: List[SourceCitation] = Field(default_factory=list, description="Verified institutional document citations.")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="UTC response generation timestamp.")
+    timestamp: datetime = Field(default_factory=utc_now, description="UTC response generation timestamp.")
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +61,7 @@ class DocumentMetadata(BaseModel):
         default="general",
         description="Administrative division: 'fees', 'exams', 'scholarships', 'admissions', 'general'."
     )
-    uploaded_at: datetime = Field(default_factory=datetime.utcnow, description="Ingestion timestamp.")
+    uploaded_at: datetime = Field(default_factory=utc_now, description="Ingestion timestamp.")
 
 
 class DocumentUploadResponse(BaseModel):
@@ -65,7 +70,7 @@ class DocumentUploadResponse(BaseModel):
     total_pages: int = Field(..., description="Number of parsed pages.")
     chunks_created: int = Field(..., description="Number of vector chunks generated and indexed.")
     status: str = Field(default="indexed", description="Processing status.")
-    indexed_at: datetime = Field(default_factory=datetime.utcnow)
+    indexed_at: datetime = Field(default_factory=utc_now)
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +84,7 @@ class MessageRecord(BaseModel):
     sender: Literal["user", "assistant", "system"]
     text: str
     language: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
 
 
 class ConversationHistoryResponse(BaseModel):

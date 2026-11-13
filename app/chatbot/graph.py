@@ -1,5 +1,7 @@
 import os
+from datetime import datetime
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
@@ -16,7 +18,7 @@ from app.chatbot.prompts import (
 from app.models.schemas import AgentState
 from app.rag.retriever import get_campus_retriever
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class CampusChatbotWorkflow:
@@ -169,10 +171,14 @@ class CampusChatbotWorkflow:
             "Hinglish (Romanized conversational Hindi)" if detected_lang == "hinglish" else "English"
         )
 
+        # Generate live IST timestamp for deadline & schedule awareness
+        current_dt_ist = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%A, %d %B %Y, %I:%M %p IST")
+
         rag_chain = CAMPUS_RAG_PROMPT | self.llm
         try:
             result = rag_chain.invoke({
                 "system_directive": SYSTEM_CAMPUS_GROUNDING_DIRECTIVE,
+                "current_datetime": current_dt_ist,
                 "context": formatted_context,
                 "chat_history": formatted_history,
                 "query": query,

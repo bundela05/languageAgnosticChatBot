@@ -20,7 +20,6 @@ COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "campus_documents")
 os.makedirs(os.path.dirname(os.path.abspath(SQLITE_DB_PATH)), exist_ok=True)
 os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
 
-
 # ---------------------------------------------------------------------------
 # 1. SQLite Relational Storage (Conversations, Messages, Audit Logs)
 # ---------------------------------------------------------------------------

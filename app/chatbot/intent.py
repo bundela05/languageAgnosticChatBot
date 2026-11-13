@@ -8,7 +8,7 @@ from langchain_groq import ChatGroq
 
 from app.chatbot.prompts import INTENT_CLASSIFICATION_PROMPT
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class CampusIntentClassifier:

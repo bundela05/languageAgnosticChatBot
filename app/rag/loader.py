@@ -32,8 +32,6 @@ class CampusDocumentLoader:
             # First pass: use pdfplumber for table preservation and layout extraction
             with pdfplumber.open(file_path) as pdf:
                 for page_idx, page in enumerate(pdf.pages, start=1):
-                    extracted_text = ""
-                    
                     # 1. Extract layout-aware plain text
                     page_text = page.extract_text(layout=False) or ""
                     
@@ -61,7 +59,7 @@ class CampusDocumentLoader:
                             source=filename,
                             page=page_idx,
                             category=category
-                        ).model_dump()
+                        ).model_dump(mode="json")
                         
                         documents.append(
                             Document(
@@ -104,7 +102,7 @@ class CampusDocumentLoader:
                         source=file_path.name,
                         page=1,
                         category=self._infer_category(file_path.name)
-                    ).model_dump()
+                    ).model_dump(mode="json")
                     return [Document(page_content=content, metadata=metadata)]
         except Exception as e:
             print(f"[CampusDocumentLoader] Error reading text file {file_path.name}: {e}")
@@ -132,7 +130,7 @@ class CampusDocumentLoader:
                         source=file_path.name,
                         page=page_idx,
                         category=category
-                    ).model_dump()
+                    ).model_dump(mode="json")
                     docs.append(Document(page_content=text.strip(), metadata=metadata))
         except Exception as e:
             print(f"[CampusDocumentLoader] pypdf failed completely on {file_path.name}: {e}")
